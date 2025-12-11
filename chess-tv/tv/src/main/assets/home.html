@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>中国象棋 - 游戏主页</title>
+    <style>
+        /* 全局设置 */
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #1a1a1a;
+            font-family: "KaiTi", "STKaiti", "Microsoft YaHei", serif; /* 楷体优先 */
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            user-select: none;
+        }
+
+        /* 背景大字装饰 */
+        .bg-watermark {
+            position: absolute;
+            font-size: 50vh;
+            color: rgba(255, 255, 255, 0.03);
+            font-weight: bold;
+            pointer-events: none;
+            z-index: 0;
+            font-family: "LiSu", "KaiTi", serif;
+        }
+
+        /* 主容器 */
+        .menu-container {
+            position: relative;
+            z-index: 10;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 40px;
+        }
+
+        /* 标题样式 */
+        .game-title {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .title-text {
+            font-size: 5rem;
+            font-weight: bold;
+            /* 金色渐变文字 */
+            background: linear-gradient(to bottom, #ffd700, #e6b800);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            /* 模拟文字阴影/浮雕效果 */
+            filter: drop-shadow(0 4px 6px rgba(0,0,0,0.5));
+            letter-spacing: 0.5rem;
+            margin: 0;
+        }
+
+        .subtitle-text {
+            font-size: 1.2rem;
+            color: #888;
+            letter-spacing: 0.5rem;
+            margin-top: 10px;
+            font-family: sans-serif;
+            text-transform: uppercase;
+        }
+
+        /* 按钮组容器 */
+        .button-group {
+            display: flex;
+            flex-direction: column;
+            gap: 2vh;
+            width: clamp(240px, 28vw, 380px);
+        }
+
+        /* 按钮通用样式 */
+        .btn {
+            position: relative;
+            width: 100%;
+            padding: 2vh 0;
+            font-size: clamp(1.2rem, 2.4vh, 1.6rem);
+            font-weight: bold;
+            color: white;
+            border: 4px solid transparent; /* 预留边框位置 */
+            border-radius: 8px;
+            cursor: pointer;
+            font-family: inherit;
+            /* 立体阴影 */
+            box-shadow: 0 6px 0 rgba(0,0,0,0.4), 0 10px 10px rgba(0,0,0,0.3);
+            transition: all 0.1s ease;
+            outline: none;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+        }
+
+        /* 按钮点击效果 */
+        .btn:active {
+            transform: translateY(4px);
+            box-shadow: 0 2px 0 rgba(0,0,0,0.4), 0 4px 4px rgba(0,0,0,0.3);
+        }
+
+        .btn:hover, .btn:focus {
+            filter: brightness(1.2);
+            transform: scale(1.05);
+            border-color: #fff; /* 选中时显示白色边框 */
+            box-shadow: 0 0 15px rgba(255, 255, 255, 0.5), 0 6px 0 rgba(0,0,0,0.4);
+            z-index: 1;
+        }
+
+        /* 红色按钮 (主功能) */
+        .btn-red {
+            background: linear-gradient(180deg, #d32f2f 0%, #b71c1c 100%);
+            border-top: 1px solid #ef5350;
+        }
+
+        /* 蓝色/灰色按钮 (次要功能) */
+        .btn-blue {
+            background: linear-gradient(180deg, #37474f 0%, #263238 100%);
+            border-top: 1px solid #546e7a;
+        }
+
+        /* 黄色按钮 (设置) */
+        .btn-yellow {
+            background: linear-gradient(180deg, #fbc02d 0%, #f57f17 100%);
+            border-top: 1px solid #fff176;
+            color: #3e2723; /* 深褐色文字 */
+            text-shadow: none;
+        }
+
+        /* 底部版权 */
+        .footer {
+            position: absolute;
+            bottom: 20px;
+            width: 100%;
+            text-align: center;
+            color: #555;
+            font-size: 0.8rem;
+        }
+
+    </style>
+</head>
+<body>
+
+    <!-- 背景字 -->
+    <div class="bg-watermark">帥</div>
+
+    <div class="menu-container">
+        <!-- 标题 -->
+        <div class="game-title">
+            <h1 class="title-text">中国象棋</h1>
+            <div class="subtitle-text">CHINESE CHESS</div>
+        </div>
+
+        <!-- 菜单按钮 -->
+        <div class="button-group">
+            <button class="btn btn-red" onclick="window.location.href='mode_pve.html'">人机对战</button>
+            <button class="btn btn-blue" onclick="window.location.href='mode_endgame.html'">残局闯关</button>
+            <button class="btn btn-blue" onclick="window.location.href='mode_pvp.html'">双人对弈</button>
+            <button class="btn btn-yellow" onclick="alert('打开设置')">游戏设置</button>
+        </div>
+    </div>
+
+    <div class="footer">v1.0.0 Powered by YourGameEngine</div>
+
+    <script>
+        // 自动聚焦第一个按钮，方便遥控器操作
+        window.onload = function() {
+            const firstBtn = document.querySelector('.btn');
+            if(firstBtn) firstBtn.focus();
+        };
+    </script>
+</body>
+</html>

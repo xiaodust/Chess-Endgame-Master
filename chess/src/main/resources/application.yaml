@@ -1,0 +1,14 @@
+spring:
+  application:
+    name:
+  ai:
+    dashscope:
+      api-key: sk-4337f91644ea48b6abdadf8bc3ff981c
+      chat:
+        options:
+          model: qwen3-max
+  datasource:
+    url: jdbc:mysql://localhost:3306/chess?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8
+    username: root
+    password: 123456
+    driver-class-name: com.mysql.cj.jdbc.Driver

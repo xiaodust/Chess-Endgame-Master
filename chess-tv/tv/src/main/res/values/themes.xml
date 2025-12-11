@@ -1,0 +1,4 @@
+<resources>
+
+    <style name="Theme.Chess" parent="@style/Theme.Leanback" />
+</resources>
