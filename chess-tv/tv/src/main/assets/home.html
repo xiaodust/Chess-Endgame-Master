@@ -142,6 +142,19 @@
             font-size: 0.8rem;
         }
 
+        .status-banner {
+            position: fixed;
+            top: 12px;
+            left: 0;
+            width: 100%;
+            text-align: center;
+            color: #ffd700;
+            font-size: 1rem;
+            z-index: 100;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+            pointer-events: none;
+        }
+
     </style>
 </head>
 <body>
@@ -161,14 +174,45 @@
             <button class="btn btn-red" onclick="window.location.href='mode_pve.html'">人机对战</button>
             <button class="btn btn-blue" onclick="window.location.href='mode_endgame.html'">残局闯关</button>
             <button class="btn btn-blue" onclick="window.location.href='mode_pvp.html'">双人对弈</button>
-            <button class="btn btn-yellow" onclick="alert('打开设置')">游戏设置</button>
+            <button class="btn btn-yellow" onclick="openSettings()">游戏设置</button>
         </div>
     </div>
 
     <div class="footer">v1.0.0 Powered by YourGameEngine</div>
+    <div id="auth-status" class="status-banner"></div>
 
     <script>
-        const API_BASE = 'http://localhost:8080/api/user';
+        async function ping(base){
+            try{
+                const ctl = new AbortController();
+                const t = setTimeout(()=>ctl.abort(), 2500);
+                const r = await fetch(`${base}/api/user/ping`, {method:'GET', signal: ctl.signal});
+                clearTimeout(t);
+                return r && r.ok;
+            }catch(e){ return false; }
+        }
+        async function pickApiBase(){
+            const param = new URLSearchParams(location.search).get('api');
+            const cached = localStorage.getItem('apiBase');
+            const cands = [];
+            if(param) cands.push(param);
+            if(cached) cands.push(cached);
+            cands.push('http://10.0.2.2:8080','http://localhost:8080');
+            for(const base of cands){
+                setStatus(`探测后端：${base}`);
+                if(await ping(base)) { localStorage.setItem('apiBase', base); return base; }
+            }
+            return cands[0] || 'http://10.0.2.2:8080';
+        }
+        async function openSettings(){
+            const saved = localStorage.getItem('auth');
+            if(!saved){ setStatus('未登录'); return; }
+            try{
+                const info = JSON.parse(saved);
+                alert(`当前账号\n用户名：${info.username}\n密码：${info.password}`);
+            }catch(e){ setStatus('未登录'); }
+        }
+        function setStatus(t){ const el = document.getElementById('auth-status'); if(el){ el.textContent = t; el.style.display = 'block'; } }
         async function getDeviceId(){
             let id = localStorage.getItem('deviceId');
             if(id) return id;
@@ -188,17 +232,39 @@
         }
         async function ensureLogin(){
             const saved = localStorage.getItem('auth');
-            if(saved) return;
+            if(saved){
+                try{
+                    const info = JSON.parse(saved);
+                    setStatus(`已登录：${info.username}`);
+                }catch(e){ setStatus('已登录'); }
+                return;
+            }
+            const base = await pickApiBase();
+            setStatus(`后端地址：${base}`);
             const deviceId = await getDeviceId();
-            const regRes = await fetch(`${API_BASE}/registerByDevice?deviceId=${encodeURIComponent(deviceId)}`, {method: 'POST'}).then(r=>r.json()).catch(()=>null);
-            if(!regRes || !regRes.success || !regRes.data) return;
+            setStatus('正在连接后端...');
+            let regRes = null;
+            try{
+                regRes = await fetch(`${base}/api/user/registerByDevice?deviceId=${encodeURIComponent(deviceId)}`, {method: 'POST'}).then(r=>r.json());
+            }catch(err){ setStatus(`后端不可达：${String(err)}`); return; }
+            if(!regRes){ setStatus('后端不可达'); return; }
+            if(!regRes.success || !regRes.data){ setStatus('注册失败'); return; }
             const { username, password } = regRes.data;
-            const loginRes = await fetch(`${API_BASE}/login?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`, {method: 'POST'}).then(r=>r.json()).catch(()=>null);
+            setStatus('注册完成，正在登录...');
+            let loginRes = null;
+            try{
+                loginRes = await fetch(`${base}/api/user/login?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`, {method: 'POST'}).then(r=>r.json());
+            }catch(err){ setStatus(`登录失败：${String(err)}`); return; }
             if(loginRes && loginRes.success){
                 localStorage.setItem('auth', JSON.stringify({username, password, user: loginRes.data}));
+                localStorage.setItem('apiBase', base);
+                setStatus('登录成功');
+            } else {
+                setStatus('登录失败');
             }
         }
         window.onload = async function() {
+            setStatus('正在检测登录状态...');
             await ensureLogin();
             const firstBtn = document.querySelector('.btn');
             if(firstBtn) firstBtn.focus();

@@ -10,13 +10,18 @@ public class WebCorsConfig implements WebMvcConfigurer {
     public void addCorsMappings(CorsRegistry registry) {
         registry.addMapping("/**") // 所有接口
                 .allowedOriginPatterns(
+                        "*",
+                        "null",
+                        "file://*",
+                        "http://*",
+                        "https://*",
+                        "http://10.0.2.2:*",
                         "http://localhost:*",
-                        "http://192.168.*:*",
-                        "https://*" // 允许所有HTTPS域名
+                        "http://192.168.*:*" // 允许局域网与模拟器
                 ) // 允许localhost和局域网访问
                 .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS") // 允许的请求方法
                 .allowedHeaders("*") // 允许的请求头
-                .allowCredentials(true) // 允许携带凭证
+                .allowCredentials(false) // 使用通配符放开来源时禁用凭证
                 .maxAge(3600); // 预检请求的有效期
     }
 }

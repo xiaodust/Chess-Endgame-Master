@@ -5,18 +5,14 @@ import com.example.chess.dto.UserDTO;
 import com.example.chess.service.UserService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.CrossOrigin;
 
 @RestController
 @RequestMapping("api/user")
+@CrossOrigin(origins = "*")
 public class UserController {
     @Autowired
     private UserService userService;
-
-    @PostMapping("/register")
-    @ResponseBody
-    public Result<UserDTO> register(){
-        return  userService.register();
-    }
 
     @PostMapping("/registerByDevice")
     @ResponseBody
@@ -29,4 +25,10 @@ public class UserController {
     public Result<UserDTO> login(@RequestParam String username, @RequestParam String password){
         return userService.login(username,password);
     }
+    @GetMapping("/ping")
+    @ResponseBody
+    public String ping(){
+        return "ok";
+    }
 }
+    
