@@ -669,6 +669,7 @@
             this.cursor = { r: 9, c: 4 }; // 初始光标位置
             this.tt = new Map();
             this.maxUnlockedIndex = 0;
+            this.posHistory = [];
             
             // 初始化
             setTimeout(() => {
@@ -923,9 +924,11 @@
             this.selected = null;
             this.moves = [];
             this.gameOver = false;
-            this.lastScore = 0;
+            this.lastScore = this.evaluateBoard();
             this.updateEvaluation(0);
             this.hideCheckAlert();
+            this.posHistory = [];
+            this.posHistory.push(this.hashBoard());
             
             // 重置光标到红帅位置
             const redKing = lvl.pieces.find(p => (p.side === 'red' || p.color === RED) && p.type === 'king');
@@ -998,10 +1001,14 @@
             this.board[to.r][to.c] = this.board[from.r][from.c];
             this.board[from.r][from.c] = null;
             
-            // 如果是红方走棋，评估这步棋的质量
+            // 如果是红方走棋，评估这步棋的质量（考虑对手应对）
             if (this.turn === RED) {
+                const baseline = this.lastScore;
+                const depthEval = this.difficulty === 'easy' ? 1 : (this.difficulty === 'hard' ? 2 : 2);
+                const reply = this.minimax(depthEval, -Infinity, Infinity, true);
+                const replyScore = reply.score;
+                this.evaluateMove(replyScore - baseline);
                 const currentScore = this.evaluateBoard();
-                this.evaluateMove(currentScore - this.lastScore);
                 this.lastScore = currentScore;
             } else {
                 this.lastScore = this.evaluateBoard();
@@ -1020,6 +1027,7 @@
             this.moves = [];
             this.updateUI();
             this.draw();
+            if (this.posHistory) this.posHistory.push(this.hashBoard());
 
             if (this.turn === BLACK && !this.gameOver) {
                 this.triggerAIMove();
@@ -1177,6 +1185,7 @@
             if (isMaximizing) {
                 let maxEval = -Infinity;
                 for (let move of moves) {
+                    const evalBeforeLocal = this.evaluateBoard();
                     const captured = this.board[move.toR][move.toC];
                     this.board[move.toR][move.toC] = this.board[move.fromR][move.fromC];
                     this.board[move.fromR][move.fromC] = null;
@@ -1187,9 +1196,33 @@
                         this.board[move.toR][move.toC] = captured;
                         return { score: 100000 + depth, move };
                     }
+                    const isCheck = this.isOpponentInCheck(BLACK);
+                    const hsAfter = this.hashBoardSimple();
+                    const prev2 = this.posHistory.length >= 2 ? this.posHistory[this.posHistory.length - 2].split('|')[0] : null;
+                    const twoCycle = prev2 && prev2 === hsAfter;
+                    const evalAfterLocal = this.evaluateBoard();
+                    const gain = evalAfterLocal - evalBeforeLocal;
+                    if (isCheck) {
+                        let cnt = 0;
+                        for (let i = Math.max(0, this.posHistory.length - 12); i < this.posHistory.length; i++) {
+                            const es = this.posHistory[i].split('|')[0];
+                            if (es === hsAfter) cnt++;
+                        }
+                        if ((twoCycle || cnt >= 2) && !captured && Math.abs(gain) < 5) {
+                            this.board[move.fromR][move.fromC] = this.board[move.toR][move.toC];
+                            this.board[move.toR][move.toC] = captured;
+                            continue;
+                        }
+                    }
 
                     const evalObj = this.minimax(depth - 1, alpha, beta, false);
                     let s = evalObj.score;
+                    const penRep = this.repetitionPenaltyForCurrent(true);
+                    let penCheck = 0;
+                    if (isCheck) {
+                        penCheck = (twoCycle ? 20000 : 800) + (!captured ? 300 : 0) + (Math.abs(gain) < 3 ? 300 : 0);
+                    }
+                    s = s - penRep - penCheck;
                     
                     this.board[move.fromR][move.fromC] = this.board[move.toR][move.toC];
                     this.board[move.toR][move.toC] = captured;
@@ -1202,6 +1235,7 @@
             } else {
                 let minEval = Infinity;
                 for (let move of moves) {
+                    const evalBeforeLocal = this.evaluateBoard();
                     const captured = this.board[move.toR][move.toC];
                     this.board[move.toR][move.toC] = this.board[move.fromR][move.fromC];
                     this.board[move.fromR][move.fromC] = null;
@@ -1211,9 +1245,33 @@
                         this.board[move.toR][move.toC] = captured;
                         return { score: -100000 - depth, move };
                     }
+                    const isCheck = this.isOpponentInCheck(RED);
+                    const hsAfter = this.hashBoardSimple();
+                    const prev2 = this.posHistory.length >= 2 ? this.posHistory[this.posHistory.length - 2].split('|')[0] : null;
+                    const twoCycle = prev2 && prev2 === hsAfter;
+                    const evalAfterLocal = this.evaluateBoard();
+                    const gain = evalAfterLocal - evalBeforeLocal;
+                    if (isCheck) {
+                        let cnt = 0;
+                        for (let i = Math.max(0, this.posHistory.length - 12); i < this.posHistory.length; i++) {
+                            const es = this.posHistory[i].split('|')[0];
+                            if (es === hsAfter) cnt++;
+                        }
+                        if ((twoCycle || cnt >= 2) && !captured && Math.abs(gain) < 5) {
+                            this.board[move.fromR][move.fromC] = this.board[move.toR][move.toC];
+                            this.board[move.toR][move.toC] = captured;
+                            continue;
+                        }
+                    }
 
                     const evalObj = this.minimax(depth - 1, alpha, beta, true);
                     let s = evalObj.score;
+                    const penRep = this.repetitionPenaltyForCurrent(false);
+                    let penCheck = 0;
+                    if (isCheck) {
+                        penCheck = (twoCycle ? 20000 : 800) + (!captured ? 300 : 0) + (Math.abs(gain) < 3 ? 300 : 0);
+                    }
+                    s = s + penRep + penCheck;
                     
                     this.board[move.fromR][move.fromC] = this.board[move.toR][move.toC];
                     this.board[move.toR][move.toC] = captured;
@@ -1224,6 +1282,47 @@
                 }
                 return { score: minEval, move: bestMove };
             }
+        }
+
+        repetitionPenaltyForCurrent(isMaximizing) {
+            if (!this.posHistory) return 0;
+            const hs = this.hashBoardSimple();
+            let cnt = 0;
+            for (let i = Math.max(0, this.posHistory.length - 12); i < this.posHistory.length; i++) {
+                const e = this.posHistory[i];
+                const es = e.split('|')[0];
+                if (es === hs) cnt++;
+            }
+            const prev2 = this.posHistory.length >= 2 ? this.posHistory[this.posHistory.length - 2].split('|')[0] : null;
+            const isTwoStepCycle = prev2 && prev2 === hs;
+            let p = cnt >= 2 ? 600 : (cnt >= 1 ? 200 : 0);
+            if (isTwoStepCycle) p += 400;
+            const atk = isMaximizing ? BLACK : RED;
+            if (this.isOpponentInCheck(atk)) p += cnt >= 2 ? 300 : (cnt >= 1 ? 200 : 120);
+            return p;
+        }
+
+        hashBoard() {
+            let s = '';
+            for (let r = 0; r < 10; r++) {
+                for (let c = 0; c < 9; c++) {
+                    const p = this.board[r][c];
+                    if (!p) s += '.';
+                    else s += (p.color === RED ? 'r' : 'b') + p.type + r + c;
+                }
+            }
+            return s + '|' + this.turn;
+        }
+        hashBoardSimple() {
+            let s = '';
+            for (let r = 0; r < 10; r++) {
+                for (let c = 0; c < 9; c++) {
+                    const p = this.board[r][c];
+                    if (!p) s += '.';
+                    else s += (p.color === RED ? 'r' : 'b') + p.type + r + c;
+                }
+            }
+            return s;
         }
 
         evaluateBoard() {

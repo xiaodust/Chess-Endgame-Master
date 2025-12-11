@@ -542,7 +542,7 @@
             this.posHistory = [];
             this.posHistory.push(this.hashBoard());
             
-            this.lastScore = 0; // 重置初始分数
+            this.lastScore = this.evaluateBoard();
             this.updateEvaluation(0); // 初始化评价
             
             this.updateUI();
@@ -661,20 +661,16 @@
             this.lastMove = { from: {r: from.r, c: from.c}, to: {r: to.r, c: to.c} };
             this.appendMoveLog(this.board[to.r][to.c], from, to, captured);
 
-            // 评估走棋质量 (双人模式下，简单对双方都进行评估)
-            const currentScore = this.evaluateBoard();
-            
+            const baseline = this.lastScore;
+            const depthEval = 2;
             if (this.turn === RED) {
-                // 红方走棋，delta = current - last. 
-                // score是黑方视角，红方好 -> score变小 -> delta变小 (负数好)
-                this.evaluateMove(currentScore - this.lastScore, 'red');
+                const reply = this.minimax(depthEval, -Infinity, Infinity, true);
+                this.evaluateMove(reply.score - baseline, 'red');
             } else {
-                // 黑方走棋，delta = current - last.
-                // score是黑方视角，黑方好 -> score变大 -> delta变大 (正数好)
-                // evaluateMove 默认是 "负数好" (delta < 0 is Good)，所以我们要传反的 delta 或者修改 evaluateMove
-                // 这里我们传 -(delta) 这样逻辑就统一了：传入的值越小越好
-                this.evaluateMove(-(currentScore - this.lastScore), 'black');
+                const reply = this.minimax(depthEval, -Infinity, Infinity, false);
+                this.evaluateMove(-(reply.score - baseline), 'black');
             }
+            const currentScore = this.evaluateBoard();
             this.lastScore = currentScore;
 
             if (captured && captured.type === 'king') {
@@ -788,12 +784,16 @@
 
         repetitionPenaltyForCurrent(isMaximizing) {
             if (!this.posHistory) return 0;
-            const h = this.hashBoard();
+            const hs = this.hashBoardSimple();
             let cnt = 0;
-            for (let i = Math.max(0, this.posHistory.length - 12); i < this.posHistory.length; i++) { if (this.posHistory[i] === h) cnt++; }
-            let p = cnt >= 2 ? 50 : (cnt >= 1 ? 20 : 0);
+            for (let i = Math.max(0, this.posHistory.length - 12); i < this.posHistory.length; i++) {
+                const e = this.posHistory[i];
+                const es = e.split('|')[0];
+                if (es === hs) cnt++;
+            }
+            let p = cnt >= 2 ? 200 : (cnt >= 1 ? 60 : 0);
             const atk = isMaximizing ? BLACK : RED;
-            if (this.isOpponentInCheck(atk)) p += 20;
+            if (this.isOpponentInCheck(atk)) p += cnt >= 2 ? 80 : 40;
             return p;
         }
 
@@ -828,6 +828,59 @@
             const mobRed = this.generateAllLegalMoves(RED).length;
             score += 0.1 * (mobBlack - mobRed);
             return score;
+        }
+
+        minimax(depth, alpha, beta, isMaximizing) {
+            if (depth === 0) return { score: this.evaluateBoard() };
+            const color = isMaximizing ? BLACK : RED;
+            let moves = this.generateAllLegalMoves(color);
+            if (moves.length === 0) return { score: isMaximizing ? -100000 : 100000 };
+            let bestMove = null;
+            if (isMaximizing) {
+                let maxEval = -Infinity;
+                for (let move of moves) {
+                    const captured = this.board[move.toR][move.toC];
+                    this.board[move.toR][move.toC] = this.board[move.fromR][move.fromC];
+                    this.board[move.fromR][move.fromC] = null;
+                    if (captured && captured.type === 'king') {
+                        this.board[move.fromR][move.fromC] = this.board[move.toR][move.toC];
+                        this.board[move.toR][move.toC] = captured;
+                        return { score: 100000 + depth, move };
+                    }
+                    const evalObj = this.minimax(depth - 1, alpha, beta, false);
+                    let s = evalObj.score;
+                    const pen = this.repetitionPenaltyForCurrent(true);
+                    s = s - pen;
+                    this.board[move.fromR][move.fromC] = this.board[move.toR][move.toC];
+                    this.board[move.toR][move.toC] = captured;
+                    if (s > maxEval) { maxEval = s; bestMove = move; }
+                    if (s > alpha) alpha = s;
+                    if (beta <= alpha) break;
+                }
+                return { score: maxEval, move: bestMove };
+            } else {
+                let minEval = Infinity;
+                for (let move of moves) {
+                    const captured = this.board[move.toR][move.toC];
+                    this.board[move.toR][move.toC] = this.board[move.fromR][move.fromC];
+                    this.board[move.fromR][move.fromC] = null;
+                    if (captured && captured.type === 'king') {
+                        this.board[move.fromR][move.fromC] = this.board[move.toR][move.toC];
+                        this.board[move.toR][move.toC] = captured;
+                        return { score: -100000 - depth, move };
+                    }
+                    const evalObj = this.minimax(depth - 1, alpha, beta, true);
+                    let s = evalObj.score;
+                    const pen = this.repetitionPenaltyForCurrent(false);
+                    s = s + pen;
+                    this.board[move.fromR][move.fromC] = this.board[move.toR][move.toC];
+                    this.board[move.toR][move.toC] = captured;
+                    if (s < minEval) { minEval = s; bestMove = move; }
+                    if (s < beta) beta = s;
+                    if (beta <= alpha) break;
+                }
+                return { score: minEval, move: bestMove };
+            }
         }
 
         generateAllLegalMoves(color) {
@@ -871,6 +924,17 @@
                 }
             }
             return s + '|' + this.turn;
+        }
+        hashBoardSimple() {
+            let s = '';
+            for (let r = 0; r < 10; r++) {
+                for (let c = 0; c < 9; c++) {
+                    const p = this.board[r][c];
+                    if (!p) s += '.';
+                    else s += (p.color === RED ? 'r' : 'b') + p.type + r + c;
+                }
+            }
+            return s;
         }
         // quiescence removed as AI thinking is not needed
 
