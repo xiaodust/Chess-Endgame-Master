@@ -145,11 +145,13 @@
             position: absolute;
             width: 50px;
             height: 50px;
-            border: 4px solid #00e676;
-            box-shadow: 0 0 10px #00e676;
+            border: 4px solid #ffd700;
+            box-shadow: 0 0 15px rgba(255, 215, 0, 0.8);
+            box-sizing: border-box;
             pointer-events: none;
             display: none;
             z-index: 10;
+            transition: left 0.1s, top 0.1s, width 0.1s, height 0.1s;
         }
 
         canvas {
@@ -346,10 +348,11 @@
     </div>
 
     <!-- 中间：棋盘 -->
-    <div class="main-area">
+    <div class="main-area" id="main-area">
         <canvas id="xiangqi-board" tabindex="0"></canvas>
         <div id="thinking-overlay" class="overlay-text">电脑思考中...</div>
         <div id="check-alert">将军!</div>
+        <div id="board-cursor" class="cursor-box"></div>
     </div>
 
     <!-- 胜率条 -->
@@ -440,8 +443,44 @@
             this.canvas.addEventListener('mousedown', handleInput);
             this.canvas.addEventListener('touchstart', handleInput, {passive: false});
             // 简单键盘支持，暂不处理复杂的 TV 焦点逻辑，以保持核心功能
-            document.addEventListener('keydown', (e) => this.handleKey(e));
-            this.canvas.focus();
+            this.canvas.addEventListener('keydown', (e) => this.handleKey(e));
+            this.canvas.addEventListener('focus', () => this.onFocus(true));
+            this.canvas.addEventListener('blur', () => this.onFocus(false));
+            setTimeout(() => this.canvas.focus(), 500);
+            this.attachRightSidebarKeys();
+        }
+
+        onFocus(focused) {
+            const area = document.getElementById('main-area');
+            if (focused) {
+                area.classList.add('focused');
+                this.updateCursor();
+            } else {
+                area.classList.remove('focused');
+                this.hideCursor();
+            }
+        }
+
+        updateCursor() {
+            const el = document.getElementById('board-cursor');
+            if (!el) return;
+            const gs = this.gridSize;
+            const x = this.margin + this.cursor.c * gs;
+            const y = this.margin + this.cursor.r * gs;
+            const areaRect = document.getElementById('main-area').getBoundingClientRect();
+            const canvasRect = this.canvas.getBoundingClientRect();
+            const offsetLeft = canvasRect.left - areaRect.left + this.canvas.clientLeft;
+            const offsetTop = canvasRect.top - areaRect.top + this.canvas.clientTop;
+            el.style.width = gs + 'px';
+            el.style.height = gs + 'px';
+            el.style.left = (offsetLeft + x - gs/2) + 'px';
+            el.style.top = (offsetTop + y - gs/2) + 'px';
+            el.style.display = 'block';
+        }
+
+        hideCursor() {
+            const el = document.getElementById('board-cursor');
+            if (el) el.style.display = 'none';
         }
 
         resize() {
@@ -465,6 +504,7 @@
             this.canvas.height = this.gridSize * 9 + this.margin * 2;
             
             this.draw();
+            this.updateCursor();
         }
 
         initGame() {
@@ -526,6 +566,7 @@
             this.canvas.focus();
 
             this.cursor = { r, c };
+            this.updateCursor();
             const target = this.board[r][c];
 
             if (target && target.color === this.turn) {
@@ -543,9 +584,67 @@
 
         handleKey(e) {
             if (this.isThinking) return;
-            // 简单键盘操作，主要用于调试
-            const k = e.key;
-            if (k === 'u' || k === 'U') { this.undoMove(); return; }
+            let handled = true;
+            switch(e.key) {
+                case 'ArrowUp':
+                    if (this.cursor.r > 0) this.cursor.r--;
+                    break;
+                case 'ArrowDown':
+                    if (this.cursor.r < 9) this.cursor.r++;
+                    break;
+                case 'ArrowLeft':
+                    if (this.cursor.c > 0) this.cursor.c--; else {}
+                    break;
+                case 'ArrowRight':
+                    if (this.cursor.c < 8) this.cursor.c++; else { this.focusSidebarRight(); return; }
+                    break;
+                case 'Enter':
+                case 'NumpadEnter':
+                case ' ':
+                case 'Ok':
+                    this.handleCursorClick();
+                    break;
+                case 'Backspace':
+                case 'Escape':
+                    this.selected = null; this.moves = []; this.draw(); this.updateCursor();
+                    break;
+                case 'u':
+                case 'U':
+                    this.undoMove();
+                    break;
+                default:
+                    handled = false;
+            }
+            if (handled) { e.preventDefault(); this.updateCursor(); this.draw(); }
+        }
+
+        handleCursorClick() {
+            if (this.selected && this.selected.r === this.cursor.r && this.selected.c === this.cursor.c) {
+                this.selected = null; this.moves = []; this.draw(); this.updateCursor(); return;
+            }
+            const x = this.margin + this.cursor.c * this.gridSize;
+            const y = this.margin + this.cursor.r * this.gridSize;
+            this.handleClick(x, y);
+        }
+
+        focusSidebarRight() {
+            const els = Array.from(document.querySelectorAll('.sidebar-right .action-btn'));
+            const first = els.find(el => !el.disabled);
+            if (first) first.focus();
+        }
+
+        attachRightSidebarKeys() {
+            const els = Array.from(document.querySelectorAll('.sidebar-right .action-btn'));
+            els.forEach((el, idx) => {
+                el.tabIndex = 0;
+                el.onkeydown = (e) => {
+                    const k = e.key;
+                    if (k === 'ArrowLeft') { e.preventDefault(); this.canvas.focus(); return; }
+                    if (k === 'ArrowUp') { e.preventDefault(); const p = els[idx-1]; if (p) p.focus(); return; }
+                    if (k === 'ArrowDown') { e.preventDefault(); const n = els[idx+1]; if (n) n.focus(); return; }
+                    if (k === 'Enter' || k === ' ' || k === 'Ok') { e.preventDefault(); el.click(); return; }
+                };
+            });
         }
 
         makeMove(from, to, captured) {

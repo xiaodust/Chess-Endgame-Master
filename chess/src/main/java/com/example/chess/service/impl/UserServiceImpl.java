@@ -4,6 +4,7 @@ import com.example.chess.dto.Result;
 import com.example.chess.dto.UserDTO;
 import com.example.chess.mapper.UserMapper;
 import com.example.chess.service.UserService;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import lombok.extern.slf4j.Slf4j;
 import com.example.chess.model.User;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,7 +21,7 @@ public class UserServiceImpl implements UserService {
     public Result<UserDTO> login(String userName, String password) {
         log.info("---开始登录---");
         Result<UserDTO> result = new Result<>();
-        User user=userMapper.getByUsername(userName);
+        User user = userMapper.selectOne(new QueryWrapper<User>().eq("username", userName));
         if(user==null){
             result.setCode("601");
             result.setSuccess(false);
@@ -55,5 +56,30 @@ public class UserServiceImpl implements UserService {
         result.setData(user.TODO());
         log.info("注册完成");
         return  result;
+    }
+
+    @Override
+    public Result<UserDTO> registerByDevice(String deviceId) {
+        log.info("---设备注册---");
+        Result<UserDTO> result = new Result<>();
+        User existing = userMapper.selectOne(new QueryWrapper<User>().eq("username", deviceId));
+        if (existing != null) {
+            result.setCode("200");
+            result.setSuccess(true);
+            result.setMessage("已注册");
+            result.setData(existing.TODO());
+            log.info("设备已注册");
+            return result;
+        }
+        User user = new User();
+        user.setUsername(deviceId);
+        user.setPassword(UUID.randomUUID().toString().substring(0,12));
+        userMapper.insert(user);
+        result.setCode("200");
+        result.setSuccess(true);
+        result.setMessage("注册成功");
+        result.setData(user.TODO());
+        log.info("设备注册完成");
+        return result;
     }
 }

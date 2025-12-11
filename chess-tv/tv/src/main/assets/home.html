@@ -168,8 +168,38 @@
     <div class="footer">v1.0.0 Powered by YourGameEngine</div>
 
     <script>
-        // 自动聚焦第一个按钮，方便遥控器操作
-        window.onload = function() {
+        const API_BASE = 'http://localhost:8080/api/user';
+        async function getDeviceId(){
+            let id = localStorage.getItem('deviceId');
+            if(id) return id;
+            try{
+                if(window.Android && typeof window.Android.getDeviceId === 'function'){
+                    id = window.Android.getDeviceId();
+                } else if(window.Device && typeof window.Device.getId === 'function'){
+                    id = window.Device.getId();
+                } else {
+                    id = 'tv-' + (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()));
+                }
+            }catch(e){
+                id = 'tv-' + (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()));
+            }
+            localStorage.setItem('deviceId', id);
+            return id;
+        }
+        async function ensureLogin(){
+            const saved = localStorage.getItem('auth');
+            if(saved) return;
+            const deviceId = await getDeviceId();
+            const regRes = await fetch(`${API_BASE}/registerByDevice?deviceId=${encodeURIComponent(deviceId)}`, {method: 'POST'}).then(r=>r.json()).catch(()=>null);
+            if(!regRes || !regRes.success || !regRes.data) return;
+            const { username, password } = regRes.data;
+            const loginRes = await fetch(`${API_BASE}/login?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`, {method: 'POST'}).then(r=>r.json()).catch(()=>null);
+            if(loginRes && loginRes.success){
+                localStorage.setItem('auth', JSON.stringify({username, password, user: loginRes.data}));
+            }
+        }
+        window.onload = async function() {
+            await ensureLogin();
             const firstBtn = document.querySelector('.btn');
             if(firstBtn) firstBtn.focus();
         };

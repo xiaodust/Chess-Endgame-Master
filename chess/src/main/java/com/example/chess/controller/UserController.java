@@ -18,6 +18,12 @@ public class UserController {
         return  userService.register();
     }
 
+    @PostMapping("/registerByDevice")
+    @ResponseBody
+    public Result<UserDTO> registerByDevice(@RequestParam String deviceId){
+        return userService.registerByDevice(deviceId);
+    }
+
     @PostMapping("/login")
     @ResponseBody
     public Result<UserDTO> login(@RequestParam String username, @RequestParam String password){
