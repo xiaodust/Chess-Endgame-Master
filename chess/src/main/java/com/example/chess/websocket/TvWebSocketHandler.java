@@ -24,6 +24,75 @@ public class TvWebSocketHandler extends TextWebSocketHandler {
         this.chessAiService = chessAiService;
     }
 
+    private JsonNode normalizeAgentJson(JsonNode node) {
+        try {
+            if (node == null) return null;
+            if (node.isTextual()) {
+                JsonNode parsed = tryParseJsonText(node.asText());
+                if (parsed != null && parsed.isObject()) return parsed;
+            }
+            if (node.has("content")) {
+                String inner = node.path("content").asText("");
+                if (inner != null && !inner.isEmpty()) {
+                    JsonNode parsed = tryParseJsonText(inner);
+                    if (parsed != null && parsed.isObject()) return parsed;
+                }
+            }
+            if (node.has("message") && node.path("message").has("content")) {
+                String inner = node.path("message").path("content").asText("");
+                if (inner != null && !inner.isEmpty()) {
+                    JsonNode parsed = tryParseJsonText(inner);
+                    if (parsed != null && parsed.isObject()) return parsed;
+                }
+            }
+            if (node.has("choices") && node.path("choices").isArray() && node.path("choices").size() > 0) {
+                JsonNode first = node.path("choices").get(0);
+                if (first != null && first.has("message") && first.path("message").has("content")) {
+                    String inner = first.path("message").path("content").asText("");
+                    if (inner != null && !inner.isEmpty()) {
+                        JsonNode parsed = tryParseJsonText(inner);
+                        if (parsed != null && parsed.isObject()) return parsed;
+                    }
+                }
+            }
+        } catch (Exception ignore) {}
+        return node;
+    }
+
+    private JsonNode tryParseJsonText(String text) {
+        try { return mapper.readTree(text); } catch (Exception e) { }
+        if (text == null) return null;
+        String s = text.trim();
+        if (s.startsWith("```") && s.endsWith("```") ) {
+            s = s.replaceAll("^```[a-zA-Z0-9_-]*\\n?", "");
+            s = s.replaceAll("\\n?```$", "");
+        }
+        int start = s.indexOf('{');
+        if (start < 0) return null;
+        int depth = 0; int end = -1;
+        for (int i = start; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '{') depth++;
+            else if (c == '}') { depth--; if (depth == 0) { end = i; break; } }
+        }
+        if (end > start) {
+            String sub = s.substring(start, end + 1);
+            try { return mapper.readTree(sub); } catch (Exception ignore) {}
+        }
+        return null;
+    }
+
+    private String deriveAiMoveFromText(String text) {
+        if (text == null) return "";
+        String t = text.replaceAll("\n", " ").trim();
+        java.util.regex.Pattern p = java.util.regex.Pattern.compile("(\\d+)\\s*[,，]\\s*(\\d+)\\s*→\\s*(\\d+)\\s*[,，]\\s*(\\d+)");
+        java.util.regex.Matcher m = p.matcher(t);
+        if (m.find()) {
+            return m.group(1) + "," + m.group(2) + "→" + m.group(3) + "," + m.group(4);
+        }
+        return "";
+    }
+
     private double computeRedWinRateFromPosition(String positionJson) {
         try {
             JsonNode node = mapper.readTree(positionJson);
@@ -90,12 +159,18 @@ public class TvWebSocketHandler extends TextWebSocketHandler {
                             finalResp.put("status", "final");
                             try {
                                 JsonNode evalJson = mapper.readTree(evalOutput);
+                                evalJson = normalizeAgentJson(evalJson);
                                 if (evalJson.has("win_rate")) finalResp.set("win_rate", evalJson.get("win_rate"));
                                 if (heuristicNode != null && heuristicNode.isObject()) {
                                     double before = heuristicNode.path("score_before").asDouble(0);
                                     double after = heuristicNode.path("score_after").asDouble(0);
                                     double delta = after - before;
-                                    String fallbackTrend = (delta <= -5) ? "妙手" : (delta >= 5 ? "败着" : "缓手");
+                                    boolean isCheck = heuristicNode.path("tactical").path("is_check_on_opponent").asBoolean(false);
+                                    int capturedVal = heuristicNode.path("tactical").path("captured_value").asInt(0);
+                                    String fallbackTrend = (delta <= -6) ? "妙手" : (delta >= 6 ? "败着" : "缓手");
+                                    if (isCheck || capturedVal >= 40) {
+                                        if (delta < 10) fallbackTrend = "妙手";
+                                    }
                                     if (evalJson.has("trend")) {
                                         String agentTrend = evalJson.path("trend").asText("");
                                         boolean strongImprove = delta <= -8;
@@ -123,6 +198,7 @@ public class TvWebSocketHandler extends TextWebSocketHandler {
                             } catch (Exception ignore1) { }
                             try {
                                 JsonNode adviseJson = mapper.readTree(adviseOutput);
+                                adviseJson = normalizeAgentJson(adviseJson);
                                 String aiMoveText = adviseJson.path("ai_move").asText("");
                                 if (adviseJson.has("ai_move")) finalResp.set("ai_move", adviseJson.get("ai_move"));
                                 String adviceText = adviseJson.has("advice") ? adviseJson.path("advice").asText("") : "";
@@ -148,15 +224,46 @@ public class TvWebSocketHandler extends TextWebSocketHandler {
                                         adviceText = hint;
                                     }
                                 }
+                                if ((aiMoveText == null || aiMoveText.trim().isEmpty())) {
+                                    String derived = deriveAiMoveFromText(adviceText);
+                                    if (!derived.isEmpty()) finalResp.put("ai_move", derived);
+                                }
                                 if (adviceText != null && !adviceText.isEmpty()) {
                                     if (adviceText.length() > 50) adviceText = adviceText.substring(0,50);
                                     finalResp.put("advice", adviceText);
                                 }
                                 if (adviseJson.has("plan")) finalResp.set("plan", adviseJson.get("plan"));
+                                if (!finalResp.has("plan") || !finalResp.get("plan").isArray() || finalResp.get("plan").size() == 0) {
+                                    String txt = adviceText == null ? "" : adviceText;
+                                    java.util.List<String> items = new java.util.ArrayList<>();
+                                    for (String part : txt.split("[；;，,。]\\s*")) {
+                                        String sPart = part == null ? "" : part.trim();
+                                        if (sPart.isEmpty()) continue;
+                                        if (sPart.matches(".*\\d+\\s*[,，]\\s*\\d+\\s*→\\s*\\d+\\s*[,，]\\s*\\d+.*")) continue;
+                                        items.add(sPart);
+                                        if (items.size() >= 3) break;
+                                    }
+                                    if (items.isEmpty() && hint != null && !hint.isEmpty()) {
+                                        for (String part : hint.split("[；;，,。]\\s*")) {
+                                            String sPart = part == null ? "" : part.trim();
+                                            if (sPart.isEmpty()) continue;
+                                            if (sPart.matches(".*\\d+\\s*[,，]\\s*\\d+\\s*→\\s*\\d+\\s*[,，]\\s*\\d+.*")) continue;
+                                            items.add(sPart);
+                                            if (items.size() >= 3) break;
+                                        }
+                                    }
+                                    if (items.isEmpty()) {
+                                        items.add("巩固关键点位");
+                                        items.add("形成先手或杀势");
+                                    }
+                                    com.fasterxml.jackson.databind.node.ArrayNode arr = mapper.createArrayNode();
+                                    for (String it : items) arr.add(it);
+                                    finalResp.set("plan", arr);
+                                }
                                 if (adviseJson.has("win_rate") && !finalResp.has("win_rate")) finalResp.set("win_rate", adviseJson.get("win_rate"));
                             } catch (Exception ignore2) { }
                             double wrOverall = computeRedWinRateFromPosition(positionCurrent);
-                            if (wrOverall > 0) {
+                            if (wrOverall > 0 && !finalResp.has("win_rate")) {
                                 finalResp.put("win_rate", Math.round(wrOverall));
                             }
                             session.sendMessage(new TextMessage(finalResp.toString().getBytes(StandardCharsets.UTF_8)));

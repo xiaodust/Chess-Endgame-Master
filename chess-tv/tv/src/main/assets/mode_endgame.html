@@ -423,6 +423,9 @@
             <div class="sidebar-header">AI 评价</div>
             <div class="eval-content">
                 <div id="eval-score" class="eval-score score-neutral">--</div>
+                <div id="eval-move" class="eval-comment"></div>
+                <div id="eval-advice" class="eval-comment"></div>
+                <div id="eval-plan" class="eval-comment"></div>
                 <div id="eval-comment" class="eval-comment">等待对局开始...</div>
             </div>
         </div>
@@ -1016,7 +1019,9 @@
             if (this.turn === RED) {
                 const positionAfterPlayer = this.serializePosition();
                 const moveText = this.describeMove(from, to, captured);
-                this.lastPlayerHeuristic = { score_before: scoreBefore, score_after: scoreAfter };
+                const capturedValue = captured ? (PIECE_VALUE[captured.type] || 0) : 0;
+                const isCheck = this.isOpponentInCheck(RED);
+                this.lastPlayerHeuristic = { score_before: scoreBefore, score_after: scoreAfter, tactical: { is_check_on_opponent: !!isCheck, captured_value: capturedValue } };
                 this.lastPlayerMoveText = moveText;
                 this.positionAfterPlayer = positionAfterPlayer;
                 this.lastScore = scoreAfter;
@@ -1063,13 +1068,19 @@
             try{
                 if(data.type === 'round_summary'){
                     if(data.status && data.status==='pending') return;
-                    const trend = data.trend; const wr = data.win_rate; const mv = data.ai_move; const adv = data.advice;
+                    const trend = data.trend; const wr = data.win_rate; const mv = data.ai_move; const adv = data.advice; const plan = Array.isArray(data.plan)?data.plan:[];
                     if(trend) this.updateEvalFromAgent(trend);
                     if(wr!==undefined && wr!==null && isFinite(Number(wr))) this.updateWinRateFromAgent(Number(wr)); else this.updateWinRateFallback();
+                    const elMove = document.getElementById('eval-move');
+                    const elAdvice = document.getElementById('eval-advice');
+                    const elPlan = document.getElementById('eval-plan');
                     const elComment = document.getElementById('eval-comment');
                     const t = (adv||'').toString();
                     const short = t.length>50 ? t.slice(0,50) : t;
-                    if(elComment){ elComment.textContent = `AI建议：${(mv||'').toString()} ${short}`; }
+                    if(elMove) elMove.textContent = `着法：${(mv||'').toString()}`;
+                    if(elAdvice) elAdvice.textContent = short?`建议：${short}`:"";
+                    if(elPlan) elPlan.textContent = plan.length?`计划：${plan.map(s=>String(s||'').trim()).filter(Boolean).join('；')}`:"";
+                    if(elComment) elComment.textContent = '';
                 }
             }catch(e){ }
         }
@@ -1091,10 +1102,8 @@
         updateEvalFromAgent(trend){
             const map = { '妙手': {cls:'score-good', txt:'妙手'}, '缓手': {cls:'score-warn', txt:'缓手'}, '败着': {cls:'score-bad', txt:'败着'} };
             const elScore = document.getElementById('eval-score');
-            const elComment = document.getElementById('eval-comment');
             const cfg = map[trend] || {cls:'score-neutral', txt:trend};
             if(elScore){ elScore.textContent = cfg.txt; elScore.className = 'eval-score ' + cfg.cls; }
-            if(elComment && trend){ elComment.textContent = `评估：${trend}`; }
         }
 
         serializePosition(){
