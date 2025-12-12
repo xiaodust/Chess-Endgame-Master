@@ -1211,7 +1211,7 @@
 
         appendMoveLog(piece, from, to, captured) {
             const name = this.getPieceName(piece);
-            const text = `${name} ${from.c},${from.r}→${to.c},${to.r}`;
+            const text = `${name} ${from.c+1},${from.r+1}→${to.c+1},${to.r+1}`;
             this.moveLog.push({ turn: this.turn === RED ? 'red' : 'black', text });
         }
 

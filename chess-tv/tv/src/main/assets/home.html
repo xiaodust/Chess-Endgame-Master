@@ -266,9 +266,63 @@
         window.onload = async function() {
             setStatus('正在检测登录状态...');
             await ensureLogin();
+            try{
+                const base = localStorage.getItem('apiBase') || 'http://10.0.2.2:8080';
+                setupChessWS(base);
+            }catch(e){
+                setStatus('WS 连接初始化失败');
+            }
             const firstBtn = document.querySelector('.btn');
             if(firstBtn) firstBtn.focus();
         };
+
+        function setupChessWS(base){
+            let ws = null;
+            let retry = 0;
+            const maxRetry = 5;
+            const toWsUrl = (b)=>{
+                try{ const u = new URL(b); const proto = u.protocol === 'https:' ? 'wss:' : 'ws:'; return `${proto}//${u.host}/ws/tv`; }catch(e){ return `ws://localhost:8080/ws/tv`; }
+            };
+            const url = toWsUrl(base);
+            setStatus(`连接 WS：${url}`);
+            const pending = [];
+            const subscribers = [];
+            function connect(){
+                try{
+                    ws = new WebSocket(url);
+                    ws.onopen = ()=>{ retry = 0; setStatus('WS 已连接');
+                        try{ while(pending.length){ ws.send(pending.shift()); } }catch(e){}
+                    };
+                    ws.onclose = ()=>{ setStatus('WS 已断开'); if(retry < maxRetry){ retry++; setTimeout(connect, 1000 * retry); } };
+                    ws.onerror = ()=>{ setStatus('WS 错误'); };
+                    ws.onmessage = (ev)=>{
+                        try{
+                            const data = JSON.parse(ev.data);
+                            if(data.type === 'round_summary'){
+                                if(data.status === 'pending') setStatus('AI评估中...');
+                                else setStatus('AI评估完成');
+                            }else if(data.type === 'error'){
+                                setStatus(`WS错误：${data.message || '未知错误'}`);
+                            }else{
+                                console.log('WS_MESSAGE', data);
+                            }
+                            try{ subscribers.forEach(fn=>fn(data)); }catch(e){}
+                        }catch(err){ console.log('WS_MESSAGE_TEXT', ev.data); }
+                    };
+                }catch(e){ setStatus('WS 连接失败'); }
+            }
+            connect();
+            window.ChessWS = {
+                
+                ready(){ return ws && ws.readyState === WebSocket.OPEN; },
+                subscribe(fn){ subscribers.push(fn); }
+                ,sendRoundSummary(payload){
+                    const msg = JSON.stringify(Object.assign({type:'round_summary'}, payload || {}));
+                    if(ws && ws.readyState === WebSocket.OPEN){ ws.send(msg); }
+                    else { pending.push(msg); }
+                }
+            };
+        }
     </script>
 </body>
 </html>

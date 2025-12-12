@@ -52,12 +52,12 @@
             flex-direction: column;
             border: 1px solid #444;
             box-shadow: 0 0 10px rgba(0,0,0,0.5);
-            flex: 2; /* 走棋记录占左侧 2/3 */
+            flex: 1; /* 与 AI 评价平分左侧空间 */
             overflow: hidden;
         }
 
         .eval-panel {
-            flex: 1; /* AI 评价占左侧 1/3 */
+            flex: 1; /* 与走棋记录各占 50% */
             min-height: 0;
             background-color: #333;
             border-radius: 8px;
@@ -123,6 +123,10 @@
             font-size: clamp(0.9rem, 1.8vh, 1.1rem);
             color: #bbb;
             line-height: 1.5;
+            word-break: break-word;
+            overflow-wrap: anywhere;
+            white-space: normal;
+            max-width: 100%;
         }
 
         /* --- 中间：棋盘区域 --- */
@@ -471,6 +475,8 @@
             this.stats = { redWins: 0, blackWins: 0 };
             
             this.lastScore = 0; // 上一步分数
+            this.winRateDisplay = 50; // 胜率显示值（红方），用于平滑
+            this.winRateLastUpdate = 0; // 上次更新时间戳
             
             this.loadStats();
             this.resize();
@@ -498,6 +504,11 @@
             
             // 初始聚焦棋盘
             setTimeout(() => this.canvas.focus(), 500);
+
+            try{
+                const base = localStorage.getItem('apiBase') || 'http://10.0.2.2:8080';
+                this.ws = setupChessWSForPage(base, (msg)=>this.onWsMessage(msg));
+            }catch(e){ console.log('WS init failed', e); }
         }
 
         onFocus(focused) {
@@ -732,16 +743,17 @@
             this.lastMove = { from: {r: from.r, c: from.c}, to: {r: to.r, c: to.c} };
             this.appendMoveLog(this.board[to.r][to.c], from, to, captured);
 
-            // 如果是红方走棋，评估这步棋的质量
+            const scoreBefore = this.lastScore;
+            const scoreAfter = this.evaluateBoard();
             if (this.turn === RED) {
-                const baseline = this.lastScore;
-                const depthEval = this.difficulty === 'easy' ? 1 : (this.difficulty === 'hard' ? 2 : 2);
-                const reply = this.minimax(depthEval, -Infinity, Infinity, true);
-                this.evaluateMove(reply.score - baseline);
-                const currentScore = this.evaluateBoard();
-                this.lastScore = currentScore;
+                const positionAfterPlayer = this.serializePosition();
+                const moveText = this.describeMove(from, to, captured);
+                this.lastPlayerHeuristic = { score_before: scoreBefore, score_after: scoreAfter };
+                this.lastPlayerMoveText = moveText;
+                this.positionAfterPlayer = positionAfterPlayer;
+                this.lastScore = scoreAfter;
             } else {
-                this.lastScore = this.evaluateBoard();
+                this.lastScore = scoreAfter;
             }
 
             if (captured && captured.type === 'king') {
@@ -770,52 +782,108 @@
             this.draw();
             this.renderMoveLog();
 
+            if (this.turn === RED) {
+                const payload = {
+                    position: this.serializePosition(),
+                    position_player: this.positionAfterPlayer || this.serializePosition(),
+                    player_move: this.lastPlayerMoveText || '',
+                    heuristic: this.lastPlayerHeuristic || {},
+                    hint: this.buildLocalHint()
+                };
+                if (window.ChessWS) { window.ChessWS.sendRoundSummary(payload); }
+                else if (this.ws) { this.ws.sendRoundSummary(payload); }
+                this.showLocalRedSuggestion();
+            }
+
             if (this.isAIEnabled && this.turn === BLACK && !this.gameOver) {
                 this.triggerAIMove();
             }
         }
         
-        // 评价红方走棋质量
-        evaluateMove(delta) {
-            // delta > 0: 黑方得分增加，红方劣势 -> 坏棋
-            // delta < 0: 黑方得分减少，红方优势 -> 好棋
-            // 阈值设定
+        
+
+        onWsMessage(data){
+            try{
+                if(data.type === 'round_summary'){
+                    if(data.status && data.status==='pending') return;
+                    const trend = data.trend; const wr = data.win_rate; const mv = data.ai_move; const adv = data.advice;
+                    if(trend) this.updateEvalFromAgent(trend);
+                    if(wr!==undefined && wr!==null && isFinite(Number(wr))) this.updateWinRateFromAgent(Number(wr)); else this.updateWinRateFallback();
+                    const elComment = document.getElementById('eval-comment');
+                    const t = (adv||'').toString();
+                    const short = t.length>50 ? t.slice(0,50) : t;
+                    if(elComment){ elComment.textContent = `AI建议：${(mv||'').toString()} ${short}`; }
+                }
+            }catch(e){ }
+        }
+
+        updateWinRateFromAgent(percent){
+            const target = Math.max(5, Math.min(95, Number(percent)));
+            const now = Date.now();
+            const current = (typeof this.winRateDisplay === 'number') ? this.winRateDisplay : target;
+            const maxStep = 7; // 单次最多变化 7%
+            let next = current + Math.max(-maxStep, Math.min(maxStep, target - current));
+            // 轻微差异不更新，减少抖动
+            if (Math.abs(next - current) < 0.5) next = target;
+            this.winRateDisplay = next;
+            this.winRateLastUpdate = now;
+            const fill = document.getElementById('win-rate-fill');
+            const text = document.getElementById('win-rate-text');
+            if(fill) fill.style.height = this.winRateDisplay + '%';
+            if(text) text.textContent = Math.round(this.winRateDisplay) + '%';
+        }
+
+        updateEvalFromAgent(trend){
+            const map = { '妙手': {cls:'score-good', txt:'妙手'}, '缓手': {cls:'score-warn', txt:'缓手'}, '败着': {cls:'score-bad', txt:'败着'} };
             const elScore = document.getElementById('eval-score');
             const elComment = document.getElementById('eval-comment');
-            
-            let comment = "";
-            let scoreClass = "";
-            let scoreText = "";
+            const cfg = map[trend] || {cls:'score-neutral', txt:trend};
+            if(elScore){ elScore.textContent = cfg.txt; elScore.className = 'eval-score ' + cfg.cls; }
+            if(elComment && trend){ elComment.textContent = `评估：${trend}`; }
+        }
 
-            if (delta <= -20) {
-                scoreText = "妙手";
-                scoreClass = "score-good";
-                comment = "神来之笔！这步棋走得非常精妙，局势大优！";
-            } else if (delta <= -8) {
-                scoreText = "好棋";
-                scoreClass = "score-good";
-                comment = "稳扎稳打，逐渐占据主动，继续保持！";
-            } else if (delta >= 25) {
-                scoreText = "败着";
-                scoreClass = "score-bad";
-                comment = "哎呀，这步棋是大失误，可能要丢子或失势了！";
-            } else if (delta >= 12) {
-                scoreText = "劣手";
-                scoreClass = "score-bad";
-                comment = "这步棋不太理想，可能会陷入被动。";
-            } else if (delta >= 5) {
-                scoreText = "缓手";
-                scoreClass = "score-warn";
-                comment = "这步棋有些拖沓，错失了更好的进攻机会。";
-            } else {
-                scoreText = "平稳";
-                scoreClass = "score-neutral";
-                comment = "局面平稳，双方势均力敌，寻找突破口。";
+        serializePosition(){
+            const pieces = [];
+            for(let r=0;r<10;r++){
+                for(let c=0;c<9;c++){
+                    const p = this.board[r][c];
+                    if(p){ pieces.push({type:p.type, side:(p.color===RED?'red':'black'), x:c+1, y:r+1}); }
+                }
             }
-            
-            elScore.textContent = scoreText;
-            elScore.className = "eval-score " + scoreClass;
-            elComment.textContent = comment;
+            return JSON.stringify({pieces, turn: (this.turn===RED?'red':'black')});
+        }
+        describeMove(from, to, captured){
+            const piece = this.board[to.r][to.c];
+            const name = piece?this.getPieceName(piece):'';
+            const cap = captured?('x'+this.getPieceName(captured)):'-';
+            return `${name} ${from.c+1},${from.r+1}→${to.c+1},${to.r+1} ${cap}`;
+        }
+
+        getBestMoveForRed(depth=2){
+            this.tt = this.tt || new Map();
+            this.tt.clear();
+            const r = this.minimax(depth, -Infinity, Infinity, false);
+            return r && r.move ? r.move : null;
+        }
+        showLocalRedSuggestion(){
+            const m = this.getBestMoveForRed(2);
+            if(!m) return;
+            const piece = this.board[m.fromR][m.fromC];
+            const target = this.board[m.toR][m.toC];
+            const name = piece?this.getPieceName(piece):'';
+            const cap = target?('x'+this.getPieceName(target)):'-';
+            const text = `AI建议：${name} ${m.fromC+1},${m.fromR+1}→${m.toC+1},${m.toR+1} ${cap}`;
+            const elComment = document.getElementById('eval-comment');
+            if(elComment) elComment.textContent = text;
+        }
+        buildLocalHint(){
+            const m = this.getBestMoveForRed(2);
+            if(!m) return '';
+            const piece = this.board[m.fromR][m.fromC];
+            const target = this.board[m.toR][m.toC];
+            const name = piece?this.getPieceName(piece):'';
+            const cap = target?('x'+this.getPieceName(target)):'-';
+            return `${name} ${m.fromC+1},${m.fromR+1}→${m.toC+1},${m.toR+1} ${cap}`;
         }
         
         updateEvaluation(delta) {
@@ -1384,10 +1452,10 @@
             document.getElementById('stat-red').textContent = this.stats.redWins;
             document.getElementById('stat-black').textContent = this.stats.blackWins;
 
-            this.updateWinRate();
+            
         }
 
-        updateWinRate() {
+        updateWinRateFallback() {
             // 计算当前局面分数 (黑方视角)
             const score = this.evaluateBoard();
             
@@ -1411,7 +1479,7 @@
 
         appendMoveLog(piece, from, to, captured) {
             const name = this.getPieceName(piece);
-            const text = `${name} ${from.c},${from.r}→${to.c},${to.r}`;
+            const text = `${name} ${from.c+1},${from.r+1}→${to.c+1},${to.r+1}`;
             this.moveLog.push({ turn: this.turn === RED ? 'red' : 'black', text });
         }
 
@@ -1444,6 +1512,18 @@
 
     const game = new XiangqiGame('xiangqi-board');
 
+        function setupChessWSForPage(base, onMsg){
+            let ws = null; let url; const pending=[];
+            try{ const u = new URL(base); const proto = u.protocol==='https:'?'wss:':'ws:'; url = `${proto}//${u.host}/ws/tv`; }
+            catch(e){ url = 'ws://localhost:8080/ws/tv'; }
+            ws = new WebSocket(url);
+            ws.onopen = ()=>{ try{ while(pending.length){ ws.send(pending.shift()); } }catch(e){} };
+            ws.onmessage = (ev)=>{ try{ const d = JSON.parse(ev.data); onMsg && onMsg(d); }catch(e){ } };
+            return {
+                sendRoundSummary(payload){ try{ const m = JSON.stringify(Object.assign({type:'round_summary'}, payload||{})); if(ws.readyState===WebSocket.OPEN){ ws.send(m); } else { pending.push(m); } }catch(e){} },
+                ready(){ return ws && ws.readyState === WebSocket.OPEN; }
+            };
+        }
 </script>
 
 </body>
