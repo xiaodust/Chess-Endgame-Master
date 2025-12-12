@@ -91,13 +91,21 @@ public class TvWebSocketHandler extends TextWebSocketHandler {
                             try {
                                 JsonNode evalJson = mapper.readTree(evalOutput);
                                 if (evalJson.has("win_rate")) finalResp.set("win_rate", evalJson.get("win_rate"));
-                                if (evalJson.has("trend")) finalResp.set("trend", evalJson.get("trend"));
-                                else if (heuristicNode != null && heuristicNode.isObject()) {
+                                if (heuristicNode != null && heuristicNode.isObject()) {
                                     double before = heuristicNode.path("score_before").asDouble(0);
                                     double after = heuristicNode.path("score_after").asDouble(0);
                                     double delta = after - before;
-                                    String t = (delta >= 5) ? "妙手" : (delta <= -5 ? "败着" : "缓手");
-                                    finalResp.put("trend", t);
+                                    String fallbackTrend = (delta <= -5) ? "妙手" : (delta >= 5 ? "败着" : "缓手");
+                                    if (evalJson.has("trend")) {
+                                        String agentTrend = evalJson.path("trend").asText("");
+                                        boolean strongImprove = delta <= -8;
+                                        boolean strongWorsen = delta >= 8;
+                                        if (strongImprove && !"妙手".equals(agentTrend)) finalResp.put("trend", "妙手");
+                                        else if (strongWorsen && !"败着".equals(agentTrend)) finalResp.put("trend", "败着");
+                                        else finalResp.put("trend", agentTrend);
+                                    } else {
+                                        finalResp.put("trend", fallbackTrend);
+                                    }
                                     double K = 50.0;
                                     double wrHeuristic = 100.0 / (1.0 + Math.exp(after / K));
                                     wrHeuristic = Math.max(5.0, Math.min(95.0, wrHeuristic));
@@ -109,6 +117,8 @@ public class TvWebSocketHandler extends TextWebSocketHandler {
                                             finalResp.put("win_rate", Math.round(wrHeuristic));
                                         }
                                     }
+                                } else if (evalJson.has("trend")) {
+                                    finalResp.set("trend", evalJson.get("trend"));
                                 }
                             } catch (Exception ignore1) { }
                             try {
