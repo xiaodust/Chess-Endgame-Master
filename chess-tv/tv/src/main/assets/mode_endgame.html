@@ -1087,12 +1087,7 @@
 
         updateWinRateFromAgent(percent){
             const target = Math.max(5, Math.min(95, Number(percent)));
-            this.winRateDisplay = (typeof this.winRateDisplay === 'number') ? this.winRateDisplay : 50;
-            const current = this.winRateDisplay;
-            const maxStep = 7;
-            let next = current + Math.max(-maxStep, Math.min(maxStep, target - current));
-            if (Math.abs(next - current) < 0.5) next = target;
-            this.winRateDisplay = next;
+            this.winRateDisplay = target;
             const fill = document.getElementById('win-rate-fill');
             const text = document.getElementById('win-rate-text');
             if(fill) fill.style.height = this.winRateDisplay + '%';
@@ -1153,10 +1148,19 @@
         updateEvaluation(delta) {
             const elScore = document.getElementById('eval-score');
             const elComment = document.getElementById('eval-comment');
-            if (!elScore || !elComment) return;
-            elScore.textContent = "--";
-            elScore.className = "eval-score score-neutral";
-            elComment.textContent = "等待对局开始...";
+            const elMove = document.getElementById('eval-move');
+            const elAdvice = document.getElementById('eval-advice');
+            const elPlan = document.getElementById('eval-plan');
+            if (elScore) { elScore.textContent = "--"; elScore.className = "eval-score score-neutral"; }
+            if (elComment) elComment.textContent = "等待对局开始...";
+            if (elMove) elMove.textContent = "";
+            if (elAdvice) elAdvice.textContent = "";
+            if (elPlan) elPlan.textContent = "";
+            this.winRateDisplay = 50;
+            const fill = document.getElementById('win-rate-fill');
+            const text = document.getElementById('win-rate-text');
+            if(fill) fill.style.height = '50%';
+            if(text) text.textContent = '50%';
         }
         
         handleWin(winnerColor) {

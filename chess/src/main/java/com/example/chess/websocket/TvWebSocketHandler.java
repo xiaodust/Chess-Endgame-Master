@@ -152,116 +152,97 @@ public class TvWebSocketHandler extends TextWebSocketHandler {
                     session.sendMessage(new TextMessage(pending.toString().getBytes(StandardCharsets.UTF_8)));
                     pool.submit(() -> {
                         try {
-                            String evalOutput = chessAiService.evaluateUserMoveWithHeuristic(positionPlayer, playerMove, heuristicJson);
-                            String adviseOutput = chessAiService.adviseAiMoveQuick(positionCurrent, "red", hint);
+                            String evalOutput = chessAiService.adviseRoundSummary(positionCurrent, positionPlayer, playerMove, heuristicJson, "red", hint);
                             ObjectNode finalResp = mapper.createObjectNode();
                             finalResp.put("type", "round_summary");
                             finalResp.put("status", "final");
                             try {
-                                JsonNode evalJson = mapper.readTree(evalOutput);
-                                evalJson = normalizeAgentJson(evalJson);
-                                if (evalJson.has("win_rate")) finalResp.set("win_rate", evalJson.get("win_rate"));
-                                if (heuristicNode != null && heuristicNode.isObject()) {
-                                    double before = heuristicNode.path("score_before").asDouble(0);
-                                    double after = heuristicNode.path("score_after").asDouble(0);
-                                    double delta = after - before;
-                                    boolean isCheck = heuristicNode.path("tactical").path("is_check_on_opponent").asBoolean(false);
-                                    int capturedVal = heuristicNode.path("tactical").path("captured_value").asInt(0);
-                                    String fallbackTrend = (delta <= -6) ? "妙手" : (delta >= 6 ? "败着" : "缓手");
-                                    if (isCheck || capturedVal >= 40) {
-                                        if (delta < 10) fallbackTrend = "妙手";
-                                    }
-                                    if (evalJson.has("trend")) {
-                                        String agentTrend = evalJson.path("trend").asText("");
-                                        boolean strongImprove = delta <= -8;
-                                        boolean strongWorsen = delta >= 8;
-                                        if (strongImprove && !"妙手".equals(agentTrend)) finalResp.put("trend", "妙手");
-                                        else if (strongWorsen && !"败着".equals(agentTrend)) finalResp.put("trend", "败着");
-                                        else finalResp.put("trend", agentTrend);
-                                    } else {
-                                        finalResp.put("trend", fallbackTrend);
-                                    }
-                                    double K = 50.0;
-                                    double wrHeuristic = 100.0 / (1.0 + Math.exp(after / K));
-                                    wrHeuristic = Math.max(5.0, Math.min(95.0, wrHeuristic));
-                                    if (!finalResp.has("win_rate")) {
-                                        finalResp.put("win_rate", Math.round(wrHeuristic));
-                                    } else {
-                                        double wrAgent = finalResp.path("win_rate").asDouble(50.0);
-                                        if (Math.abs(wrAgent - wrHeuristic) >= 10.0) {
-                                            finalResp.put("win_rate", Math.round(wrHeuristic));
-                                        }
-                                    }
-                                } else if (evalJson.has("trend")) {
-                                    finalResp.set("trend", evalJson.get("trend"));
-                                }
+                                JsonNode summaryJson = mapper.readTree(evalOutput);
+                                summaryJson = normalizeAgentJson(summaryJson);
+                                if (summaryJson.has("ai_move")) finalResp.set("ai_move", summaryJson.get("ai_move"));
+                                if (summaryJson.has("advice")) finalResp.set("advice", summaryJson.get("advice"));
+                                if (summaryJson.has("plan")) finalResp.set("plan", summaryJson.get("plan"));
+                                if (summaryJson.has("win_rate")) finalResp.set("win_rate", summaryJson.get("win_rate"));
+                                if (summaryJson.has("trend")) finalResp.set("trend", summaryJson.get("trend"));
                             } catch (Exception ignore1) { }
-                            try {
-                                JsonNode adviseJson = mapper.readTree(adviseOutput);
-                                adviseJson = normalizeAgentJson(adviseJson);
-                                String aiMoveText = adviseJson.path("ai_move").asText("");
-                                if (adviseJson.has("ai_move")) finalResp.set("ai_move", adviseJson.get("ai_move"));
-                                String adviceText = adviseJson.has("advice") ? adviseJson.path("advice").asText("") : "";
-                                if (adviceText == null) adviceText = "";
-                                // 过滤仅重复着法或坐标的建议
-                                String normAdvice = adviceText.replaceAll("\\s+", "");
-                                String normMove = aiMoveText == null ? "" : aiMoveText.replaceAll("\\s+", "");
-                                boolean repeatsMove = !normAdvice.isEmpty() && normAdvice.equalsIgnoreCase(normMove);
-                                boolean coordOnly = adviceText.matches(".*\\d+\\s*[,，]\\s*\\d+\\s*→\\s*\\d+\\s*[,，]\\s*\\d+.*");
-                                if (adviceText.trim().isEmpty() || repeatsMove || coordOnly) {
-                                    if (adviseJson.has("plan") && adviseJson.get("plan").isArray()) {
-                                        StringBuilder sbPlan = new StringBuilder();
-                                        for (JsonNode it : adviseJson.get("plan")) {
-                                            String seg = it.asText("");
-                                            if (!seg.isEmpty()) {
-                                                if (sbPlan.length() > 0) sbPlan.append('；');
-                                                sbPlan.append(seg);
-                                            }
+                            String adviceText = finalResp.path("advice").asText("");
+                            String aiMoveText = finalResp.path("ai_move").asText("");
+                            String normAdvice = adviceText.replaceAll("\\s+", "");
+                            String normMove = aiMoveText == null ? "" : aiMoveText.replaceAll("\\s+", "");
+                            boolean repeatsMove = !normAdvice.isEmpty() && normAdvice.equalsIgnoreCase(normMove);
+                            boolean coordOnly = adviceText.matches(".*\\d+\\s*[,，]\\s*\\d+\\s*→\\s*\\d+\\s*[,，]\\s*\\d+.*");
+                            if ((aiMoveText == null || aiMoveText.trim().isEmpty())) {
+                                String derived = deriveAiMoveFromText(adviceText);
+                                if (!derived.isEmpty()) finalResp.put("ai_move", derived);
+                            }
+                            if (adviceText == null || adviceText.trim().isEmpty() || repeatsMove || coordOnly) {
+                                JsonNode planNode = finalResp.get("plan");
+                                if (planNode != null && planNode.isArray()) {
+                                    StringBuilder sbPlan = new StringBuilder();
+                                    for (JsonNode it : planNode) {
+                                        String seg = it.asText("");
+                                        if (!seg.isEmpty()) {
+                                            if (sbPlan.length() > 0) sbPlan.append('；');
+                                            sbPlan.append(seg);
                                         }
-                                        adviceText = sbPlan.toString();
                                     }
-                                    if ((adviceText == null || adviceText.trim().isEmpty()) && hint != null && !hint.isEmpty()) {
-                                        adviceText = hint;
-                                    }
+                                    adviceText = sbPlan.toString();
                                 }
-                                if ((aiMoveText == null || aiMoveText.trim().isEmpty())) {
-                                    String derived = deriveAiMoveFromText(adviceText);
-                                    if (!derived.isEmpty()) finalResp.put("ai_move", derived);
+                                if ((adviceText == null || adviceText.trim().isEmpty()) && hint != null && !hint.isEmpty()) {
+                                    adviceText = hint;
                                 }
                                 if (adviceText != null && !adviceText.isEmpty()) {
                                     if (adviceText.length() > 50) adviceText = adviceText.substring(0,50);
                                     finalResp.put("advice", adviceText);
                                 }
-                                if (adviseJson.has("plan")) finalResp.set("plan", adviseJson.get("plan"));
-                                if (!finalResp.has("plan") || !finalResp.get("plan").isArray() || finalResp.get("plan").size() == 0) {
-                                    String txt = adviceText == null ? "" : adviceText;
-                                    java.util.List<String> items = new java.util.ArrayList<>();
-                                    for (String part : txt.split("[；;，,。]\\s*")) {
+                            }
+                            if (!finalResp.has("plan") || !finalResp.get("plan").isArray() || finalResp.get("plan").size() == 0) {
+                                String txt = finalResp.path("advice").asText("");
+                                java.util.List<String> items = new java.util.ArrayList<>();
+                                for (String part : txt.split("[；;，,。]\\s*")) {
+                                    String sPart = part == null ? "" : part.trim();
+                                    if (sPart.isEmpty()) continue;
+                                    if (sPart.matches(".*\\d+\\s*[,，]\\s*\\d+\\s*→\\s*\\d+\\s*[,，]\\s*\\d+.*")) continue;
+                                    items.add(sPart);
+                                    if (items.size() >= 3) break;
+                                }
+                                if (items.isEmpty() && hint != null && !hint.isEmpty()) {
+                                    for (String part : hint.split("[；;，,。]\\s*")) {
                                         String sPart = part == null ? "" : part.trim();
                                         if (sPart.isEmpty()) continue;
                                         if (sPart.matches(".*\\d+\\s*[,，]\\s*\\d+\\s*→\\s*\\d+\\s*[,，]\\s*\\d+.*")) continue;
                                         items.add(sPart);
                                         if (items.size() >= 3) break;
                                     }
-                                    if (items.isEmpty() && hint != null && !hint.isEmpty()) {
-                                        for (String part : hint.split("[；;，,。]\\s*")) {
-                                            String sPart = part == null ? "" : part.trim();
-                                            if (sPart.isEmpty()) continue;
-                                            if (sPart.matches(".*\\d+\\s*[,，]\\s*\\d+\\s*→\\s*\\d+\\s*[,，]\\s*\\d+.*")) continue;
-                                            items.add(sPart);
-                                            if (items.size() >= 3) break;
-                                        }
-                                    }
-                                    if (items.isEmpty()) {
-                                        items.add("巩固关键点位");
-                                        items.add("形成先手或杀势");
-                                    }
-                                    com.fasterxml.jackson.databind.node.ArrayNode arr = mapper.createArrayNode();
-                                    for (String it : items) arr.add(it);
-                                    finalResp.set("plan", arr);
                                 }
-                                if (adviseJson.has("win_rate") && !finalResp.has("win_rate")) finalResp.set("win_rate", adviseJson.get("win_rate"));
-                            } catch (Exception ignore2) { }
+                                if (items.isEmpty()) {
+                                    items.add("巩固关键点位");
+                                    items.add("形成先手或杀势");
+                                }
+                                com.fasterxml.jackson.databind.node.ArrayNode arr = mapper.createArrayNode();
+                                for (String it : items) arr.add(it);
+                                finalResp.set("plan", arr);
+                            }
+                            if (heuristicNode != null && heuristicNode.isObject()) {
+                                double before = heuristicNode.path("score_before").asDouble(0);
+                                double after = heuristicNode.path("score_after").asDouble(0);
+                                double delta = after - before;
+                                boolean isCheck = heuristicNode.path("tactical").path("is_check_on_opponent").asBoolean(false);
+                                int capturedVal = heuristicNode.path("tactical").path("captured_value").asInt(0);
+                                if (!finalResp.has("trend")) {
+                                    String fallbackTrend = (delta <= -6) ? "妙手" : (delta >= 6 ? "败着" : "缓手");
+                                    if (isCheck || capturedVal >= 40) {
+                                        if (delta < 10) fallbackTrend = "妙手";
+                                    }
+                                    finalResp.put("trend", fallbackTrend);
+                                }
+                                double K = 50.0;
+                                double wrHeuristic = 100.0 / (1.0 + Math.exp(after / K));
+                                wrHeuristic = Math.max(5.0, Math.min(95.0, wrHeuristic));
+                                if (!finalResp.has("win_rate")) {
+                                    finalResp.put("win_rate", Math.round(wrHeuristic));
+                                }
+                            }
                             double wrOverall = computeRedWinRateFromPosition(positionCurrent);
                             if (wrOverall > 0 && !finalResp.has("win_rate")) {
                                 finalResp.put("win_rate", Math.round(wrOverall));
